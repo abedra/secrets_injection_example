@@ -13,8 +13,18 @@ run: main
 clean:
 	rm -f *.o main
 
+docker:
+	docker build -t dynamic-secrets .
+
+docker-network:
+	docker network create dynamic-secrets
+
+docker-run: docker
+	docker run --net dynamic-secrets dynamic-secrets
+
 vault:
-	docker run -p 8200:8200 vault
+	docker run --net dynamic-secrets -p 8200:8200 vault
 
 postgres:
-	docker run -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres
+	docker rm dynamic-secrets-postgres
+	docker run -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 --name dynamic-secrets-postgres --net dynamic-secrets postgres

@@ -1,6 +1,6 @@
 {
   "database": {
-    "host": "127.0.0.1",
+    "host": "dynamic-secrets-postgres",
     "port": 5432,
     "database": "postgres",
     "username": "postgres",

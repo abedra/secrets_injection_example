@@ -14,7 +14,7 @@ struct DatabaseConfig {
 
     std::string connectionString() {
         std::stringstream ss;
-        ss << "hostaddr=" << host << " "
+        ss << "host=" << host << " "
            << "port=" << port << " "
            << "user=" << username << " "
            << "password=" << password << " "
