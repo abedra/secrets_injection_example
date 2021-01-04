@@ -34,19 +34,24 @@ void from_json(const nlohmann::json &j, DatabaseConfig &databaseConfig) {
 
 DatabaseConfig getDatabaseConfiguration(const std::filesystem::path &path) {
     std::ifstream inputStream(path.generic_string());
-    std::string unparsedJson(std::istreambuf_iterator<char>{inputStream}, {});
+    std::string raw(std::istreambuf_iterator<char>{inputStream}, {});
 
-    return nlohmann::json::parse(unparsedJson)["database"];
+    return nlohmann::json::parse(raw)["database"];
 }
 
 int main(void) {
     std::filesystem::path configPath{"config.json"};
-    DatabaseConfig databaseConfig = getDatabaseConfiguration(configPath);
-    pqxx::connection databaseConnection{databaseConfig.connectionString()};
 
-    if (databaseConnection.is_open()) {
-        std::cout << "Connected" << std::endl;
-    } else {
-        std::cout << "Could not connect" << std::endl;
+    try {
+        DatabaseConfig databaseConfig = getDatabaseConfiguration(configPath);
+        pqxx::connection databaseConnection{databaseConfig.connectionString()};
+    
+        if (databaseConnection.is_open()) {
+            std::cout << "Connected" << std::endl;
+        } else {
+            std::cout << "Could not connect" << std::endl;
+        }
+    } catch(const std::exception &e) {
+        std::cout << e.what() << std::endl;
     }
 }
