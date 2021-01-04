@@ -31,4 +31,7 @@
 *.out
 *.app
 
+# Project Files
 main
+.env
+bin

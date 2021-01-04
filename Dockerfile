@@ -24,7 +24,7 @@ RUN make main
 FROM ubuntu:focal
 
 RUN apt-get -y update
-RUN apt-get -y install libpqxx-6.4
+RUN apt-get -y install libpqxx-6.4 libcurl4
 
 RUN groupadd user && useradd -g user user && mkdir -p /run
 RUN chown -R user: /run

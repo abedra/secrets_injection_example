@@ -1,57 +1,84 @@
-#include <iostream>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <pqxx/pqxx>
-#include "lib/json.hpp"
+
 #include "VaultClient.h"
+#include "lib/json.hpp"
 
 struct DatabaseConfig {
-    int port;
-    std::string host;
-    std::string database;
-    std::string username;
-    std::string password;
+  int port;
+  std::string host;
+  std::string database;
+  std::string username;
+  std::string password;
 
-    std::string connectionString() {
-        std::stringstream ss;
-        ss << "host=" << host << " "
-           << "port=" << port << " "
-           << "user=" << username << " "
-           << "password=" << password << " "
-           << "dbname=" << database;
-        
-        return ss.str();
-    }
+  std::string connectionString() {
+    std::stringstream ss;
+    ss << "host=" << host << " "
+       << "port=" << port << " "
+       << "user=" << username << " "
+       << "password=" << password << " "
+       << "dbname=" << database;
+
+    return ss.str();
+  }
 };
 
 void from_json(const nlohmann::json &j, DatabaseConfig &databaseConfig) {
-    j.at("port").get_to(databaseConfig.port);
-    j.at("host").get_to(databaseConfig.host);
-    j.at("database").get_to(databaseConfig.database);
-    j.at("username").get_to(databaseConfig.username);
-    j.at("password").get_to(databaseConfig.password);
+  j.at("port").get_to(databaseConfig.port);
+  j.at("host").get_to(databaseConfig.host);
+  j.at("database").get_to(databaseConfig.database);
+  j.at("username").get_to(databaseConfig.username);
+  j.at("password").get_to(databaseConfig.password);
 }
 
 DatabaseConfig getDatabaseConfiguration(const std::filesystem::path &path) {
-    std::ifstream inputStream(path.generic_string());
-    std::string raw(std::istreambuf_iterator<char>{inputStream}, {});
+  std::ifstream inputStream(path.generic_string());
+  std::string raw(std::istreambuf_iterator<char>{inputStream}, {});
 
-    return nlohmann::json::parse(raw)["database"];
+  return nlohmann::json::parse(raw)["database"];
+}
+
+Vault::Client getVaultClient() {
+  char *roleId = std::getenv("APPROLE_ROLE_ID");
+  char *secretId = std::getenv("APPROLE_SECRET_ID");
+
+  if (!roleId && !secretId) {
+    std::cout << "APPROLE_ROLE_ID and APPROLE_SECRET_ID environment variables "
+                 "must be set"
+              << std::endl;
+    exit(-1);
+  }
+
+  Vault::AppRoleStrategy appRoleStrategy{Vault::RoleId{roleId},
+                                         Vault::SecretId{secretId}};
+  Vault::Config config = Vault::ConfigBuilder()
+    .withHost(Vault::Host{"dynamic-secrets-vault"})
+    .withTlsEnabled(false)
+    .build();
+
+  return Vault::Client{config, appRoleStrategy};
 }
 
 int main(void) {
-    std::filesystem::path configPath{"config.json"};
+  std::filesystem::path configPath{"config.json"};
+  Vault::Client vaultClient = getVaultClient();
 
+  if (vaultClient.is_authenticated()) {
     try {
-        DatabaseConfig databaseConfig = getDatabaseConfiguration(configPath);
-        pqxx::connection databaseConnection{databaseConfig.connectionString()};
-    
-        if (databaseConnection.is_open()) {
-            std::cout << "Connected" << std::endl;
-        } else {
-            std::cout << "Could not connect" << std::endl;
-        }
-    } catch(const std::exception &e) {
-        std::cout << e.what() << std::endl;
+      DatabaseConfig databaseConfig = getDatabaseConfiguration(configPath);
+      pqxx::connection databaseConnection{databaseConfig.connectionString()};
+
+      if (databaseConnection.is_open()) {
+        std::cout << "Connected" << std::endl;
+      } else {
+        std::cout << "Could not connect" << std::endl;
+      }
+    } catch (const std::exception &e) {
+      std::cout << e.what() << std::endl;
     }
+  } else {
+      std::cout << "Unable to authenticate to Vault" << std::endl;
+  }
 }
