@@ -100,22 +100,168 @@ This simple custom deserializer is a quick and easy way to get there. We have no
 
 ## Introducing Vault
 
-### Setting up The Key Value Store
+HashiCorp Vault is a tool for secrets management. While we are using it for our example, this post will skip an in depth explanation. More can be found on [HashiCorp's Product Page](https://www.hashicorp.com/products/vault). In order to use Vault we need to set it up and add our secrets. We can use a single script to get the vault binary and use it provide a ready to use environment
+
+```shell
+#!/usr/bin/env bash
+
+set -e
+
+VAULT_VERSION=1.6.1
+
+if [[ ! -f "bin/vault" ]]; then
+    mkdir -p bin
+
+    pushd bin
+
+    curl -O -L https://releases.hashicorp.com/vault/$VAULT_VERSION/vault_"$VAULT_VERSION"_linux_amd64.zip
+    unzip vault_"$VAULT_VERSION"_linux_amd64.zip
+    rm vault_"$VAULT_VERSION"_linux_amd64.zip
+
+    popd
+fi
+
+export VAULT_ADDR=http://127.0.0.1:8200
+VAULT=bin/vault
+
+$VAULT login
+$VAULT policy write example vault/example.hcl
+$VAULT auth enable approle
+$VAULT write auth/approle/role/client policies="example"
+ROLE_ID=$($VAULT read auth/approle/role/client/role-id | grep role_id | awk '{print $2}')
+SECRET_ID=$($VAULT write -f auth/approle/role/client/secret-id | grep -m1 secret_id | awk '{print $2}')
+$VAULT kv put secret/database vault:dbuser=postgres vault:dbpass=postgres
+
+rm -f .env
+
+echo "APPROLE_ROLE_ID=$ROLE_ID" >> .env
+echo "APPROLE_SECRET_ID=$SECRET_ID" >> .env
+```
+
+This will leave us with a `.env` file that we can use in our program to provide the Vault authentiation credentials
 
 ### Adding Vault to our Program
 
+In order lookup our secrets, we need a way to interface with Vault. We will do this using [libvault](https://github.com/abedra/libvault). First, let's get an instance of `Vault::Client`
+
+```cpp
+Vault::Client getVaultClient() {
+  char *roleId = std::getenv("APPROLE_ROLE_ID");
+  char *secretId = std::getenv("APPROLE_SECRET_ID");
+
+  if (!roleId && !secretId) {
+    std::cout << "APPROLE_ROLE_ID and APPROLE_SECRET_ID environment variables must be set" << std::endl;
+    exit(-1);
+  }
+
+  Vault::AppRoleStrategy appRoleStrategy{Vault::RoleId{roleId}, Vault::SecretId{secretId}};
+  Vault::Config config = Vault::ConfigBuilder()
+                             .withHost(Vault::Host{"dynamic-secrets-vault"})
+                             .withTlsEnabled(false)
+                             .build();
+
+  return Vault::Client{config, appRoleStrategy};
+}
+```
+
+This will pickup the `APPROLE_ROLE_ID` and `APPROLE_SECRET_ID` environment variables and use them to authenticate to vault and get a token to use for future requests. These are automatically passed in in the example using the `--env-file` argument to Docker. The secret bootstrapping problem is something that deserves its own detailed discussion.
+
 ## Introducing Secret References
 
-### Updating the Configuration Loader
+Now that we have the ability to communicate with Vault, we need to modify our configuration to reference the location in of the secret we wish to consume. 
 
-### Trying it Out
+```json
+{
+  "database": {
+    "host": "dynamic-secrets-postgres",
+    "port": 5432,
+    "database": "postgres",
+    "username": "vault:dbuser",
+    "password": "vault:dbpass"
+  }
+}
+```
 
-## Next Steps
+In order to resolve this we will be adding a layer of indirection. Each item in our configuration has a key and a value. We will replace the value with a key into Vault. Let's add a simple replacement mechanism into `DatabaseConfig`:
 
-### Fully Dynamic References
+```cpp
+  DatabaseConfig withSecrets(const Vault::Client &vaultClient) {
+    Vault::KeyValue kv{vaultClient};
+    auto databaseSecrets = kv.read(Vault::Path{"database"});
+    if (databaseSecrets) {
+      std::unordered_map<std::string, std::string> secrets =
+          nlohmann::json::parse(databaseSecrets.value())["data"]["data"];
+      auto maybeUsername = secrets.find(this->username);
+      auto maybePassword = secrets.find(this->password);
+      this->username = maybeUsername == secrets.end() 
+        ? this->username
+        : maybeUsername->second;
+      this->password = maybePassword == secrets.end() 
+        ? this->password
+        : maybePassword->second;
 
-### Immutable Configuration
+      return *this;
+    } else {
+      return *this;
+    }
+  }
+```
 
-### Stronger Configuration Types
+This will furnish an updated `DatabaseConfig`. If there was a value provided by vault, it will be used. If none was provided, it will continue using what was provided in the configuration. This ensures that the program will be able to move on and off of Vault at will in the case of a failure.
 
-### Using Vault's Dynamic Secrets
+## Putting it All Together
+
+Finally, let's update `main` to account for our changes:
+
+```cpp
+int main(void) {
+  std::filesystem::path configPath{"config.json"};
+  Vault::Client vaultClient = getVaultClient();
+
+  if (vaultClient.is_authenticated()) {
+    try {
+      DatabaseConfig databaseConfig =
+          getDatabaseConfiguration(configPath).withSecrets(vaultClient);
+      pqxx::connection databaseConnection{databaseConfig.connectionString()};
+
+      if (databaseConnection.is_open()) {
+        std::cout << "Connected" << std::endl;
+      } else {
+        std::cout << "Could not connect" << std::endl;
+      }
+    } catch (const std::exception &e) {
+      std::cout << e.what() << std::endl;
+    }
+  } else {
+    std::cout << "Unable to authenticate to Vault" << std::endl;
+  }
+}
+```
+
+## Running the Example
+
+This example is fully dockerized and uses three separate containers. One for PostgreSQL, one for Vault, and one for our program. The following commands will run the example.
+
+In one terminal:
+
+```shell
+make docker-network
+make postgres
+```
+
+In another terminal:
+```shell
+make vault
+```
+
+In a third terminal, copy the root token from the second terminal output after Vault has completed booting:
+```shell
+vault/setup # paste the root token value when prompted
+make docker-run
+```
+
+You will see the output `Connected` in the terminal if successful.
+
+## Wrap-Up
+
+This example is meant to demonstrate that the lift into secrets management can be both simple and low effort. In order to make this more generic a move away from the json library custom deserializers will be necessary. This would allow us to take all values as a map and construct our configuration values using an initial map with all values potentially swapped out with vault supplied values if applicable.
