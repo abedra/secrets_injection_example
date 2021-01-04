@@ -2,12 +2,12 @@
 
 ## Introduction
 
-Making the change to proper secrets management in your software can be a daunting task. The associated lift can be enough to make a team postpone the choice indefinitely. This post provides some design ideas that shold help ease the burden. We will set the following goals:
+Making the change to proper secrets management in your software can be a daunting task. The associated lift can be enough to make a team postpone the choice indefinitely. This post provides some design ideas that should help ease the burden. We will set the following goals:
 
 * Seamlessly swap out real secret values with references to secrets in another system
-* Allow real secrets to continue to be used in the case the secrets management system fails
+* Allow real secrets to continue to be used in the case of secrets management system failure
 
-Having the ability to "break glass in case of emergency" should be considered a design requirement. It's something that should only be used under dire circumstances, but it's always important to remember that availability lies at the core of security.
+Having the ability to "break glass in case of emergency" should be considered a design requirement. It's something that should only be used under dire circumstances, but it's always important to remember that availability rests at the core of security. The examples in this post can be referenced in their entirety at [https://github.com/abedra/secrets_injection_example](https://github.com/abedra/secrets_injection_example).
 
 ### Really, C++?
 
@@ -100,7 +100,7 @@ This simple custom deserializer is a quick and easy way to get there. We have no
 
 ## Introducing Vault
 
-HashiCorp Vault is a tool for secrets management. While we are using it for our example, this post will skip an in depth explanation. More can be found on [HashiCorp's Product Page](https://www.hashicorp.com/products/vault). In order to use Vault we need to set it up and add our secrets. We can use a single script to get the vault binary and use it provide a ready to use environment
+HashiCorp Vault is a tool for secrets management. While we are using it for our example, this post will skip an in depth explanation. More can be found on [HashiCorp's Product Page](https://www.hashicorp.com/products/vault). In order to use Vault we need to set it up and add our secrets. We can use a single script to get the vault binary and provide a ready to use environment
 
 ```shell
 #!/usr/bin/env bash
@@ -164,7 +164,7 @@ Vault::Client getVaultClient() {
 }
 ```
 
-This will pickup the `APPROLE_ROLE_ID` and `APPROLE_SECRET_ID` environment variables and use them to authenticate to vault and get a token to use for future requests. These are automatically passed in in the example using the `--env-file` argument to Docker. The secret bootstrapping problem is something that deserves its own detailed discussion.
+This will pickup the `APPROLE_ROLE_ID` and `APPROLE_SECRET_ID` environment variables and use them to authenticate to Vault. These are automatically passed in in the example using the `--env-file` argument to Docker. The secret bootstrapping problem is something that deserves its own detailed discussion.
 
 ## Introducing Secret References
 
@@ -182,7 +182,7 @@ Now that we have the ability to communicate with Vault, we need to modify our co
 }
 ```
 
-In order to resolve this we will be adding a layer of indirection. Each item in our configuration has a key and a value. We will replace the value with a key into Vault. Let's add a simple replacement mechanism into `DatabaseConfig`:
+We have swapped out our real secrets with the key used in Vault that idendifies the secret. Let's add a simple replacement mechanism into `DatabaseConfig`:
 
 ```cpp
   DatabaseConfig withSecrets(const Vault::Client &vaultClient) {
@@ -207,7 +207,7 @@ In order to resolve this we will be adding a layer of indirection. Each item in 
   }
 ```
 
-This will furnish an updated `DatabaseConfig`. If there was a value provided by vault, it will be used. If none was provided, it will continue using what was provided in the configuration. This ensures that the program will be able to move on and off of Vault at will in the case of a failure.
+This will furnish an updated `DatabaseConfig`. If there was a value provided by vault, it will be used. If none was provided, it will continue using what was provided in the configuration. This ensures that the program will be able to move on and off of Vault with no program changes in the event of a secrets engine failure.
 
 ## Putting it All Together
 
@@ -264,4 +264,4 @@ You will see the output `Connected` in the terminal if successful.
 
 ## Wrap-Up
 
-This example is meant to demonstrate that the lift into secrets management can be both simple and low effort. In order to make this more generic a move away from the json library custom deserializers will be necessary. This would allow us to take all values as a map and construct our configuration values using an initial map with all values potentially swapped out with vault supplied values if applicable.
+This example is meant to demonstrate that the lift into secrets management can be both simple and low effort. In order to make this more generic a move away from the json library custom deserializers will be necessary. This would allow us to take all values as a map and construct our configuration values using an initial map with all values potentially swapped out with vault supplied values if applicable. We would parse the initial configuration into a map and pass that to all of our various configuration types. It would be a good idea at this point to change the constructor to only offer one type of construction ala `std::unordered_map, Vault::Client, Vault::Path` that provides the configuration slice necessary, the Vault client, and the path to the secret mount that holds the values. The constructor can then iterate through its members, swapping out what is provided and constructing a real instance to use. 
