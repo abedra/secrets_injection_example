@@ -3,7 +3,7 @@
     "host": "dynamic-secrets-postgres",
     "port": 5432,
     "database": "postgres",
-    "username": "postgres",
-    "password": "postgres"
+    "username": "vault:dbuser",
+    "password": "vault:dbpass"
   }
 }
